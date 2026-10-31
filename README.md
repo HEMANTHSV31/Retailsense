@@ -911,3 +911,5 @@ If you encounter any issues, have feature requests, or need assistance:
 * Check the existing documentation in the `notebooks/` directory for detailed walkthroughs
 * Review the source code, each module contains clear documentation and type hints
 * Use the troubleshooting section above for common Docker related issues
+
+# Retailsense

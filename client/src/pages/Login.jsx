@@ -26,7 +26,16 @@ export default function Login() {
       await login(username, password);
       navigate('/');
     } catch (err) {
-      setError(err.response?.data?.detail || 'Login failed. Check your credentials.');
+      const detail = err.response?.data?.detail;
+      if (typeof detail === 'string') {
+        setError(detail);
+      } else if (Array.isArray(detail)) {
+        setError(detail.map((d) => d.msg || JSON.stringify(d)).join(', '));
+      } else if (detail && typeof detail === 'object') {
+        setError(JSON.stringify(detail));
+      } else {
+        setError('Login failed. Check your credentials.');
+      }
     } finally {
       setLoading(false);
     }

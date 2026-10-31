@@ -42,6 +42,7 @@ models/*
 *.sqlite
 *.sqlite3
 celerybeat-schedule*
+backend/data/
 
 # ── Temp upload ────────────────────────────────────────────────────────────────
 temp_upload.csv

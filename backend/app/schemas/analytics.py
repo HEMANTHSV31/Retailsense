@@ -27,6 +27,7 @@ class TopProduct(BaseModel):
     total_sales: float
     avg_daily_sales: float
     store_count: int
+    total_revenue: float = 0.0
 
 
 class StorePerformance(BaseModel):
@@ -34,6 +35,7 @@ class StorePerformance(BaseModel):
     total_sales: float
     avg_daily_sales: float
     item_count: int
+    total_revenue: float = 0.0
 
 
 class SeasonalBreakdown(BaseModel):

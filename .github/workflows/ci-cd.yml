@@ -1,4 +1,4 @@
-name: RetailIQ CI/CD
+name: Retailsense CI/CD
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: moazzamfarooqui/retailiq
+  IMAGE_NAME: hemanthsv31/retailsense
 
 jobs:
 

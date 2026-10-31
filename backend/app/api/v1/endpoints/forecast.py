@@ -1,6 +1,7 @@
 """Forecast generation and history endpoints (org-scoped, MySQL-backed)."""
 
 import uuid
+import pandas as pd
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -18,6 +19,39 @@ from app.services.forecasting import DemandForecaster
 from app.services.data_service import TenantDataService
 
 router = APIRouter()
+
+
+@router.get("/options")
+async def get_forecast_options(
+    db: AsyncSession = Depends(get_db),
+    org: Organization = Depends(get_current_org),
+    current_user: User = Depends(get_current_user),
+):
+    """Return available products and stores for the organization to forecast."""
+    df = await TenantDataService.load_sales_df(db, org.id)
+    if df.empty:
+        return {
+            "products": [],
+            "stores": [],
+            "models": [
+                {"id": "random_forest", "label": "Random Forest Regressor"},
+                {"id": "xgboost", "label": "XGBoost Regressor"},
+                {"id": "lightgbm", "label": "LightGBM Regressor"},
+                {"id": "baseline", "label": "Historical Mean Baseline"},
+            ],
+        }
+    products = sorted([str(p) for p in df["item_id"].dropna().unique().tolist()])
+    stores = sorted([str(s) for s in df["store_id"].dropna().unique().tolist()])
+    return {
+        "products": products,
+        "stores": stores,
+        "models": [
+            {"id": "random_forest", "label": "Random Forest Regressor"},
+            {"id": "xgboost", "label": "XGBoost Regressor"},
+            {"id": "lightgbm", "label": "LightGBM Regressor"},
+            {"id": "baseline", "label": "Historical Mean Baseline"},
+        ],
+    }
 
 
 @router.post("/generate")
@@ -38,14 +72,33 @@ async def generate_forecast(
     if len(item_store_data) == 0:
         raise HTTPException(status_code=404, detail=f"No data found for {request.item_id} at {request.store_id}")
 
+    # Enrich with calendar and seasonal time features so ML captures cycles
+    item_store_data = item_store_data.copy()
+    item_store_data["date"] = pd.to_datetime(item_store_data["date"])
+    item_store_data["year"] = item_store_data["date"].dt.year
+    item_store_data["month"] = item_store_data["date"].dt.month
+    item_store_data["day"] = item_store_data["date"].dt.day
+    item_store_data["dayofweek"] = item_store_data["date"].dt.dayofweek
+    item_store_data["quarter"] = item_store_data["date"].dt.quarter
+    item_store_data["is_weekend"] = (item_store_data["dayofweek"] >= 5).astype(int)
+
+    # Selected model type (defaulting to random_forest)
+    chosen_model = request.model_type or "random_forest"
+    if chosen_model not in ["random_forest", "xgboost", "lightgbm", "baseline"]:
+        chosen_model = "random_forest"
+
     # Train or load the org's model
     model_path = f"models/{org.id}/best_model.joblib"
-    try:
-        forecaster = DemandForecaster()
-        forecaster.load_model(model_path)
-    except (FileNotFoundError, Exception):
-        # Train on the fly
-        forecaster = DemandForecaster()
+    forecaster = None
+    if not request.model_type:
+        try:
+            forecaster = DemandForecaster()
+            forecaster.load_model(model_path)
+        except (FileNotFoundError, Exception):
+            forecaster = None
+
+    if forecaster is None:
+        forecaster = DemandForecaster(model_type=chosen_model)
         forecaster.train_model(item_store_data)
 
     # Generate forecast

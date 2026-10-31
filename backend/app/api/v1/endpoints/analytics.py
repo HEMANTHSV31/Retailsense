@@ -24,12 +24,14 @@ router = APIRouter()
 
 
 async def _load_org_daily(db: AsyncSession, org_id: str) -> pd.DataFrame:
-    """Load the org's sales as daily aggregates: date, store_id, total_sales, item_count."""
+    """Load the org's sales as daily aggregates: date, store_id, total_sales, total_revenue, item_count."""
     df = await TenantDataService.load_sales_df(db, org_id)
     if df.empty:
-        raise HTTPException(status_code=404, detail="No data for this organization. Upload or ingest data first.")
+        return pd.DataFrame(columns=["date", "store_id", "total_sales", "total_revenue", "item_count"])
+    df["revenue"] = df["sales"] * df["sell_price"].fillna(0) if "sell_price" in df.columns else 0.0
     daily = df.groupby(["date", "store_id"]).agg(
         total_sales=("sales", "sum"),
+        total_revenue=("revenue", "sum"),
         item_count=("item_id", "nunique"),
     ).reset_index()
     return daily
@@ -44,20 +46,31 @@ async def get_overview(
     """Get dashboard overview metrics for the active org."""
     df = await TenantDataService.load_sales_df(db, org.id)
     if df.empty:
-        raise HTTPException(status_code=404, detail="No data for this organization. Upload or ingest data first.")
+        return OverviewMetrics(
+            total_products=0,
+            total_stores=0,
+            total_categories=0,
+            total_states=0,
+            total_sales=0.0,
+            avg_daily_sales=0.0,
+            date_range=[],
+            n_time_series=0,
+            total_revenue=0.0,
+        )
 
     total_sales = float(df["sales"].sum())
     revenue = float((df["sales"] * df["sell_price"].fillna(0)).sum()) if "sell_price" in df.columns else 0.0
     days = df["date"].nunique()
     avg_daily = total_sales / days if days else 0
 
-    # State dimension isn't present in uploaded tenant data — fall back to 1
-    # (single-state assumption) unless a state column exists.
-    total_states = (
-        int(df["state_id"].nunique())
-        if "state_id" in df.columns and df["state_id"].notna().any()
-        else 1
-    )
+    # State dimension: check state_id column or derive from store_id prefix (e.g. CA_1 -> CA)
+    if "state_id" in df.columns and df["state_id"].notna().any():
+        total_states = int(df["state_id"].nunique())
+    elif "store_id" in df.columns and df["store_id"].notna().any():
+        states = df["store_id"].astype(str).str.split("_").str[0]
+        total_states = int(states.nunique())
+    else:
+        total_states = 1
 
     return OverviewMetrics(
         total_products=int(df["item_id"].nunique()),
@@ -81,6 +94,8 @@ async def get_sales_trend(
 ):
     """Get sales trend data for the last N days (daily totals across stores)."""
     daily = await _load_org_daily(db, org.id)
+    if daily.empty:
+        return []
     by_day = daily.groupby("date")["total_sales"].sum().reset_index().sort_values("date")
     if len(by_day) > days:
         by_day = by_day.tail(days)
@@ -101,9 +116,11 @@ async def get_top_products(
     """Get the org's top-selling products."""
     df = await TenantDataService.load_sales_df(db, org.id)
     if df.empty:
-        raise HTTPException(status_code=404, detail="No data for this organization")
+        return []
+    df["revenue"] = df["sales"] * df["sell_price"].fillna(0) if "sell_price" in df.columns else 0.0
     prods = df.groupby("item_id").agg(
         total_sales=("sales", "sum"),
+        total_revenue=("revenue", "sum"),
         days_sold=("date", "nunique"),
         store_count=("store_id", "nunique"),
     ).sort_values("total_sales", ascending=False).head(limit)
@@ -114,6 +131,7 @@ async def get_top_products(
             total_sales=float(row["total_sales"]),
             avg_daily_sales=float(row["total_sales"] / row["days_sold"]) if row["days_sold"] else 0.0,
             store_count=int(row["store_count"]),
+            total_revenue=round(float(row["total_revenue"]), 2),
         )
         for idx, row in prods.iterrows()
     ]
@@ -127,8 +145,11 @@ async def get_store_performance(
 ):
     """Get store performance comparison for the active org."""
     daily = await _load_org_daily(db, org.id)
+    if daily.empty:
+        return []
     stores = daily.groupby("store_id").agg(
         total_sales=("total_sales", "sum"),
+        total_revenue=("total_revenue", "sum"),
         days=("date", "nunique"),
         item_count=("item_count", "max"),
     ).sort_values("total_sales", ascending=False)
@@ -139,6 +160,7 @@ async def get_store_performance(
             total_sales=float(row["total_sales"]),
             avg_daily_sales=float(row["total_sales"] / row["days"]) if row["days"] else 0.0,
             item_count=int(row["item_count"]),
+            total_revenue=round(float(row["total_revenue"]), 2),
         )
         for idx, row in stores.iterrows()
     ]
@@ -154,6 +176,8 @@ async def get_seasonal_breakdown(
     from app.services.weather_service import WeatherService
 
     daily = await _load_org_daily(db, org.id)
+    if daily.empty:
+        return []
     daily["season"] = daily["date"].apply(WeatherService.get_season)
     seasonal = daily.groupby("season").agg(
         total_sales=("total_sales", "sum"),
@@ -180,6 +204,8 @@ async def get_day_of_week_analysis(
     """Get sales analysis by day of week for the active org."""
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     daily = await _load_org_daily(db, org.id)
+    if daily.empty:
+        return []
     daily["dow"] = daily["date"].dt.dayofweek
     dow_avg = daily.groupby("dow")["total_sales"].mean()
     peak = dow_avg.max()

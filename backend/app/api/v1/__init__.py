@@ -2,13 +2,18 @@
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, organizations, data, forecast, inventory, analytics, upload, model, model_registry, purchase, alerts, intelligence, advisor, data_health, reports, ops, weather, insights
+from app.api.v1.endpoints import (
+    auth, users, organizations, data, forecast, inventory, analytics, upload,
+    model, model_registry, purchase, alerts, intelligence, advisor, data_health,
+    reports, ops, weather, insights, decisions
+)
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(organizations.router, prefix="/organizations", tags=["Organizations"])
+api_router.include_router(decisions.router, prefix="/decisions", tags=["Decision Intelligence"])
 api_router.include_router(data.router, prefix="/data", tags=["Data Ingestion"])
 api_router.include_router(model_registry.router, prefix="/model-registry", tags=["Model Registry"])
 api_router.include_router(purchase.router, prefix="/purchase", tags=["Purchase Engine"])

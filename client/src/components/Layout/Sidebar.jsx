@@ -1,42 +1,30 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { LayoutDashboard, BarChart3, TrendingUp, Package, Brain, Sparkles, Upload, LogOut, ChevronLeft, ChevronRight, ShieldCheck, Store, Boxes, Bot, AlertTriangle, FileText, Database, ArrowLeftRight, Activity } from 'lucide-react';
+import { LayoutDashboard, BarChart3, TrendingUp, Package, Upload, LogOut, ChevronLeft, ChevronRight, Bot, Activity, Zap, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 
 const NAV_GROUPS = [
   {
-    label: 'Overview',
+    label: 'Decision Intelligence',
     items: [
-      { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-      { to: '/analytics', label: 'Analytics', icon: BarChart3 },
-      { to: '/forecast', label: 'Forecast', icon: TrendingUp },
+      { to: '/decisions', label: 'Decision Center', icon: Zap },
+      { to: '/advisor', label: 'AI Advisor (Groq)', icon: Bot },
+      { to: '/what-if', label: 'What-If Simulation', icon: Activity },
     ]
   },
   {
-    label: 'Management',
+    label: 'Operations & Demand',
     items: [
-      { to: '/model-insights', label: 'Model Insights', icon: Brain },
-      { to: '/inventory', label: 'Inventory', icon: Package },
-      { to: '/stores', label: 'Stores', icon: Store },
-      { to: '/products', label: 'Products', icon: Boxes },
+      { to: '/', label: 'Executive Dashboard', icon: LayoutDashboard, end: true },
+      { to: '/forecast', label: 'ML Forecast', icon: TrendingUp },
+      { to: '/inventory', label: 'Inventory Engine', icon: Package },
+      { to: '/analytics', label: 'Store Analytics', icon: BarChart3 },
+    ]
+  },
+  {
+    label: 'Data Management',
+    items: [
       { to: '/upload', label: 'Upload Data', icon: Upload },
-    ]
-  },
-  {
-    label: 'Intelligence',
-    items: [
-      { to: '/ai-insights', label: 'AI Insights', icon: Sparkles },
-      { to: '/advisor', label: 'Advisor', icon: Bot },
-      { to: '/what-if', label: 'What-If Analysis', icon: Activity },
-    ]
-  },
-  {
-    label: 'Monitoring',
-    items: [
-      { to: '/alerts', label: 'Alerts', icon: AlertTriangle },
-      { to: '/data-health', label: 'Data Health', icon: ShieldCheck },
-      { to: '/reports', label: 'Reports', icon: FileText },
-      { to: '/model-insights', label: 'Model History', icon: Database },
     ]
   }
 ];

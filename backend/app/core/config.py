@@ -29,9 +29,11 @@ class Settings(BaseSettings):
     # ── API Keys ──────────────────────────────────────────────────────────────
     OPENWEATHER_API_KEY: Optional[str] = None
     HOLIDAY_API_KEY: Optional[str] = None
-    # Claude API key for the AI Business Advisor (optional — advisor falls back
-    # to rule-based answers when unset).
+    # Claude API key for the AI Business Advisor (optional)
     ANTHROPIC_API_KEY: Optional[str] = None
+    # Groq API key for the Autonomous Decision Intelligence Engine & Advisor
+    GROQ_API_KEY: Optional[str] = None
+    GROQ_MODEL: str = "openai/gpt-oss-20b"
 
     # ── Celery ────────────────────────────────────────────────────────────────
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
@@ -52,7 +54,7 @@ class Settings(BaseSettings):
     MODEL_DIR: str = "models"
     DATA_DIR: str = "data"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": True}
+    model_config = {"env_file": [".env", "../.env"], "env_file_encoding": "utf-8", "case_sensitive": True, "extra": "ignore"}
 
 
 settings = Settings()

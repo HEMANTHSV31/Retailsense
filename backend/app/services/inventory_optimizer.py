@@ -56,7 +56,7 @@ class InventoryOptimizer:
             "eoq": eoq, "demand_multiplier_applied": demand_multiplier,
         }
 
-    def generate_inventory_recommendations(self, df, current_stock_col="current_stock", demand_multiplier=1.0):
+    def generate_inventory_recommendations(self, df, current_stock_col="current_stock", demand_multiplier=1.0, lead_time_days=7):
         """Generate inventory recommendations for all items."""
         recommendations = []
         item_store_groups = df.groupby(["item_id", "store_id"])
@@ -65,7 +65,7 @@ class InventoryOptimizer:
             if "sales" not in group.columns:
                 continue
             historical_sales = group["sales"].values
-            optimization = self.optimize_inventory_for_item(historical_sales, demand_multiplier=demand_multiplier)
+            optimization = self.optimize_inventory_for_item(historical_sales, lead_time_days=lead_time_days, demand_multiplier=demand_multiplier)
             current_stock = group[current_stock_col].iloc[-1] if current_stock_col in group.columns else 0
 
             status = "OK"

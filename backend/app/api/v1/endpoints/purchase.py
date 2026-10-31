@@ -61,7 +61,11 @@ async def purchase_decisions(
     """Generate purchase decisions with financial intelligence for the org."""
     df = await TenantDataService.load_sales_df(db, org.id)
     if df.empty:
-        raise HTTPException(status_code=404, detail="No data for this organization. Upload or ingest data first.")
+        return PurchaseDecisionsResponse(
+            decisions=[],
+            total_count=0,
+            financials=None,
+        )
 
     # Real stock levels when available
     inv_df = await TenantDataService.load_inventory_df(db, org.id)
@@ -111,7 +115,17 @@ async def financial_summary(
     """Get just the financial KPIs (inventory value, overstock capital, etc.)."""
     df = await TenantDataService.load_sales_df(db, org.id)
     if df.empty:
-        raise HTTPException(status_code=404, detail="No data for this organization")
+        return FinancialSummary(
+            total_inventory_value=0.0,
+            total_overstock_capital=0.0,
+            total_stockout_loss_risk=0.0,
+            total_carrying_cost=0.0,
+            total_potential_savings=0.0,
+            total_recommended_order_value=0.0,
+            avg_inventory_turnover=0.0,
+            avg_days_of_inventory=0.0,
+            items_to_reorder=0,
+        )
 
     inv_df = await TenantDataService.load_inventory_df(db, org.id)
     if not inv_df.empty:
@@ -142,7 +156,24 @@ async def what_if_simulation(
 
     df = await TenantDataService.load_sales_df(db, org.id)
     if df.empty:
-        raise HTTPException(status_code=404, detail="No data for this organization")
+        zero_fin = FinancialSummary(
+            total_inventory_value=0.0,
+            total_overstock_capital=0.0,
+            total_stockout_loss_risk=0.0,
+            total_carrying_cost=0.0,
+            total_potential_savings=0.0,
+            total_recommended_order_value=0.0,
+            avg_inventory_turnover=0.0,
+            avg_days_of_inventory=0.0,
+            items_to_reorder=0,
+        )
+        return WhatIfResponse(
+            baseline_financials=zero_fin,
+            scenario_financials=zero_fin,
+            scenario={},
+            deltas={},
+            top_changes=[],
+        )
 
     inv_df = await TenantDataService.load_inventory_df(db, org.id)
     if not inv_df.empty:

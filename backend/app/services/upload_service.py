@@ -96,91 +96,31 @@ class DataValidator:
         return result
 
     @classmethod
-    def validate_csv(cls, filepath: str) -> dict:
-        """Validate a CSV file and return validation results."""
+    def load_dataframe(cls, filepath: str, nrows: int | None = None) -> pd.DataFrame:
+        """Load DataFrame from CSV or Excel (.xlsx, .xls)."""
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext in [".xlsx", ".xls"]:
+            return pd.read_excel(filepath, nrows=nrows)
+        return pd.read_csv(filepath, nrows=nrows)
+
+    @classmethod
+    def validate_file(cls, filepath: str) -> dict:
+        """Validate a CSV or Excel file and return validation results."""
         try:
-            df = pd.read_csv(filepath, nrows=10000)
+            df = cls.load_dataframe(filepath, nrows=10000)
         except Exception as e:
-            result = {"valid": False, "row_count": 0, "column_count": 0, "columns": [], "warnings": [], "errors": [f"Cannot read CSV: {str(e)}"]}
-            return result
-        return cls.validate_dataframe(df)
-        result["column_count"] = len(df.columns)
-        result["columns"] = list(df.columns)
-        cols_lower = {c.lower() for c in df.columns}
-
-        # Check required columns
-        has_sales = bool(cols_lower & cls.RECOGNIZED_SALES_COLS)
-        has_date = bool(cols_lower & cls.RECOGNIZED_DATE_COLS)
-
-        if not has_sales and not has_date:
-            result["errors"].append("File must have at least a date column and a sales/quantity column")
-            return result
-
-        if not has_sales:
-            result["errors"].append("No sales column found. Expected one of: " + ", ".join(cls.RECOGNIZED_SALES_COLS))
-            return result
-
-        if not has_date:
-            result["errors"].append("No date column found. Expected one of: " + ", ".join(cls.RECOGNIZED_DATE_COLS))
-            return result
-
-        # Map column names
-        sales_col = next(c for c in df.columns if c.lower() in cls.RECOGNIZED_SALES_COLS)
-        date_col = next(c for c in df.columns if c.lower() in cls.RECOGNIZED_DATE_COLS)
-        item_col = next((c for c in df.columns if c.lower() in cls.RECOGNIZED_ITEM_COLS), None)
-        store_col = next((c for c in df.columns if c.lower() in cls.RECOGNIZED_STORE_COLS), None)
-
-        # Check data types
-        if not pd.api.types.is_numeric_dtype(df[sales_col]):
-            result["errors"].append(f"Sales column '{sales_col}' must be numeric")
-            return result
-
-        try:
-            pd.to_datetime(df[date_col])
-        except Exception:
-            result["errors"].append(f"Date column '{date_col}' contains invalid dates")
-            return result
-
-        # Stats
-        result["valid"] = True
-        result["sales_col"] = sales_col
-        result["date_col"] = date_col
-        result["item_col"] = item_col
-        result["store_col"] = store_col
-
-        try:
-            dates = pd.to_datetime(df[date_col])
-            result["date_range"] = {
-                "start": dates.min().strftime("%Y-%m-%d"),
-                "end": dates.max().strftime("%Y-%m-%d"),
-                "days": (dates.max() - dates.min()).days,
+            return {
+                "valid": False,
+                "row_count": 0,
+                "column_count": 0,
+                "columns": [],
+                "warnings": [],
+                "errors": [f"Cannot read file: {str(e)}"],
             }
-        except Exception:
-            pass
+        return cls.validate_dataframe(df)
 
-        sales = df[sales_col]
-        result["sales_stats"] = {
-            "sum": round(sales.sum(), 2),
-            "mean": round(sales.mean(), 2),
-            "min": round(sales.min(), 2),
-            "max": round(sales.max(), 2),
-            "std": round(sales.std(), 2),
-        }
-
-        # Warnings
-        missing_sales = df[sales_col].isna().sum()
-        if missing_sales > 0:
-            result["warnings"].append(f"Found {missing_sales} missing sales values ({missing_sales/len(df)*100:.1f}%)")
-
-        if df[sales_col].min() < 0:
-            result["warnings"].append("Found negative sales values — these may be returns")
-
-        if item_col is None:
-            result["warnings"].append("No product/item column found. Using single-product assumption.")
-        if store_col is None:
-            result["warnings"].append("No store/location column found. Using single-store assumption.")
-
-        return result
+    # Alias for backward compatibility
+    validate_csv = validate_file
 
     @classmethod
     def auto_clean(cls, df: pd.DataFrame, validation: dict) -> pd.DataFrame:

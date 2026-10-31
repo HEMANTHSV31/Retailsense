@@ -30,13 +30,19 @@ logger = logging.getLogger(__name__)
 MODEL = "claude-opus-5"
 MAX_SNAPSHOT_ITEMS = 12  # cap products/stores/alerts in the snapshot
 
-SYSTEM_PROMPT = """You are the AI Business Advisor for RetailIQ, a retail intelligence platform. \
-You answer questions about a retail business using ONLY the structured business snapshot provided \
-below — real data from the company's sales, inventory, forecasts, and operations. You never invent \
-numbers; every claim you make must trace to the snapshot. If the snapshot lacks the data to answer, \
-say so plainly and suggest what the owner should check. Be concrete and action-oriented: when the \
-data supports a recommendation (reorder, discount, investigate, stock up), make it. Keep answers \
-readable — short paragraphs, no tables unless they genuinely help."""
+SYSTEM_PROMPT = """You are the Senior Retail Decision Intelligence Advisor for RetailIQ.
+You advise retail business owners, category managers, and supply chain directors.
+
+Core Communication Rules:
+1. Speak in polished, executive-ready, human-readable plain English.
+2. Structure your answer with clear bold headings and clean bullet points:
+   - **Executive Summary**: 1-2 sentence high-level takeaway.
+   - **Data Findings & Situation**: Specific insights directly grounded in the provided snapshot (citing real store IDs, SKU names, revenue, days of stock, and unit counts).
+   - **Recommended Next Actions**: Prioritized, actionable operational decisions (e.g. Purchase Orders, Inter-Store Transfers, Price Markdowns).
+   - **Financial Bottom Line**: Net working capital freed, revenue protected, or holding cost reduction.
+3. DO NOT output ASCII pipe tables (never use '| Col | Col |'). Instead, format tabular lists as clean bullet points with bold identifiers.
+4. Ground every single claim in the business snapshot. Never fabricate numbers. If specific data is absent, state what needs to be verified."""
+
 
 
 class AdvisorService:
@@ -134,31 +140,70 @@ class AdvisorService:
         """Answer a business question grounded in the org's data."""
         snapshot = await AdvisorService.build_snapshot(db, org)
 
-        if not settings.ANTHROPIC_API_KEY:
-            return {
-                "answer": AdvisorService._rule_based_answer(question, snapshot),
-                "grounded": True,
-                "mode": "rules",
-                "snapshot_size": len(json.dumps(snapshot)),
-            }
+        if settings.GROQ_API_KEY:
+            try:
+                answer_text = await AdvisorService._groq_answer(snapshot, question, history or [])
+                return {
+                    "answer": answer_text,
+                    "grounded": True,
+                    "mode": f"groq ({settings.GROQ_MODEL})",
+                    "snapshot_size": len(json.dumps(snapshot)),
+                }
+            except Exception as e:
+                logger.error(f"Advisor Groq call failed, falling back: {e}")
 
-        try:
-            answer_text = await AdvisorService._claude_answer(snapshot, question, history or [])
-            return {
-                "answer": answer_text,
-                "grounded": True,
-                "mode": "claude",
-                "snapshot_size": len(json.dumps(snapshot)),
-            }
-        except Exception as e:
-            logger.error(f"Advisor Claude call failed, falling back to rules: {e}")
-            return {
-                "answer": AdvisorService._rule_based_answer(question, snapshot),
-                "grounded": True,
-                "mode": "rules",
-                "fallback_reason": str(e),
-                "snapshot_size": len(json.dumps(snapshot)),
-            }
+        if settings.ANTHROPIC_API_KEY:
+            try:
+                answer_text = await AdvisorService._claude_answer(snapshot, question, history or [])
+                return {
+                    "answer": answer_text,
+                    "grounded": True,
+                    "mode": "claude",
+                    "snapshot_size": len(json.dumps(snapshot)),
+                }
+            except Exception as e:
+                logger.error(f"Advisor Claude call failed, falling back to rules: {e}")
+
+        return {
+            "answer": AdvisorService._rule_based_answer(question, snapshot),
+            "grounded": True,
+            "mode": "rules",
+            "snapshot_size": len(json.dumps(snapshot)),
+        }
+
+    @staticmethod
+    async def _groq_answer(snapshot: dict, question: str, history: list[dict]) -> str:
+        """Call Groq API using gpt-oss-20b reasoning model."""
+        import httpx
+        context = json.dumps(snapshot, default=str)[:60_000]
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for turn in (history or [])[-6:]:
+            role = "user" if turn.get("role") == "user" else "assistant"
+            messages.append({"role": role, "content": turn.get("content", "")})
+        messages.append({"role": "user", "content": f"Business snapshot:\n{context}\n\nQuestion: {question}"})
+
+        headers = {
+            "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": settings.GROQ_MODEL,
+            "messages": messages,
+            "max_tokens": 1500,
+            "temperature": 0.2,
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            choice = data["choices"][0]["message"]
+            content = choice.get("content") or ""
+            if not content.strip() and choice.get("reasoning"):
+                content = choice.get("reasoning")
+
+            import re
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+            return content.strip()
 
     @staticmethod
     async def _claude_answer(snapshot: dict, question: str, history: list[dict]) -> str:
@@ -193,9 +238,9 @@ class AdvisorService:
 
     @staticmethod
     def _rule_based_answer(question: str, snapshot: dict) -> str:
-        """Answer common question types from the snapshot without an LLM."""
+        """Answer common question types from the snapshot in polished executive format."""
         q = question.lower()
-        lines = []
+        sections = []
 
         sales = snapshot.get("sales", {})
         inv = snapshot.get("inventory", {})
@@ -205,61 +250,63 @@ class AdvisorService:
 
         if any(k in q for k in ["why", "declin", "drop", "down", "decreas"]):
             growth = sales.get("growth_pct")
+            sections.append("### Sales Trend Analysis")
             if growth is not None and growth < 0:
-                lines.append(f"Sales are down {abs(growth):.1f}% over the last 28 days vs the prior 28 "
-                             f"(last 28d: {sales.get('last_28d_sales')}, prior: {sales.get('prior_28d_sales')}).")
+                sections.append(f"Network sales experienced a **{abs(growth):.1f}% decline** over the recent cycle vs. prior period.")
             else:
-                lines.append(f"Sales are up {growth:.1f}% over the last 28 days — no decline detected." if growth is not None else "Not enough history to assess a decline.")
+                sections.append(f"Network demand is stable to positive (**+{growth:.1f}%** observed) across the recent observation window." if growth is not None else "Historical timeline is currently accumulating baseline data.")
+
             declining = [p for p in products if p.get("growth_pct") is not None and p["growth_pct"] < -10]
             if declining:
-                lines.append("Likely drivers — products with sharp drops: " + ", ".join(p["item_id"] for p in declining[:5]))
+                sections.append("### Primary Demand Contributors\n" + "\n".join(f"- **{p['item_id']}**: Velocity dropped {p['growth_pct']:.1f}%" for p in declining[:5]))
             if alerts:
-                lines.append("Open alerts that may relate: " + "; ".join(a["title"] for a in alerts[:3]))
+                sections.append("### Operational Signals\n" + "\n".join(f"- {a['title']} (*{a['severity']}*)" for a in alerts[:3]))
 
-        if any(k in q for k in ["reorder", "order", "stock up", "purchase", "buy"]):
+        elif any(k in q for k in ["reorder", "order", "stock up", "purchase", "buy"]):
             reorder = inv.get("top_reorder_items", [])
+            sections.append("### Priority Purchase Directives")
             if reorder:
-                lines.append("Recommended reorders (top by quantity):")
+                sections.append("Immediate supplier replenishment recommended for high-velocity SKUs facing stockout:")
                 for r in reorder[:5]:
                     stockout = r.get('stockout_in_days')
-                    stockout_str = f", runs out in {stockout:.0f}d" if stockout is not None else ""
-                    lines.append(f"  - {r['item_id']} @ {r['store_id']}: order {r['recommended_order_qty']:.0f} units"
-                                 f" ({r.get('days_of_stock', 0):.0f}d of stock{stockout_str})")
+                    stockout_str = f" &bull; runs out in **{stockout:.0f} days**" if stockout is not None else ""
+                    sections.append(f"- **{r['item_id']}** at **Store {r['store_id']}**: Reorder **+{r['recommended_order_qty']:.0f} units** (Current runway: {r.get('days_of_stock', 0):.0f}d{stockout_str})")
             else:
-                lines.append("No urgent reorders detected.")
+                sections.append("- No urgent stockouts detected across evaluated store inventory buffers.")
+
             if inv.get("financials"):
                 f = inv["financials"]
-                lines.append(f"Financials: ${f['total_inventory_value']:,.0f} inventory, "
-                             f"${f['total_overstock_capital']:,.0f} overstock, "
-                             f"${f['total_stockout_loss_risk']:,.0f} stockout risk, "
-                             f"${f['total_potential_savings']:,.0f} potential savings.")
+                sections.append(f"### Financial Summary\n"
+                                f"- **Total Inventory Value**: ${f['total_inventory_value']:,.2f}\n"
+                                f"- **At-Risk Stockout Loss**: ${f['total_stockout_loss_risk']:,.2f}\n"
+                                f"- **Excess Capital Tied Up**: ${f['total_overstock_capital']:,.2f}\n"
+                                f"- **Potential Net Savings**: ${f['total_potential_savings']:,.2f}")
 
-        if any(k in q for k in ["store", "underperform", "perform", "branch", "location"]):
+        elif any(k in q for k in ["store", "underperform", "perform", "branch", "location"]):
+            sections.append("### Store Network Performance")
             if stores:
-                worst = sorted(stores, key=lambda s: (s.get("growth_pct") or 0))[:3]
                 best = sorted(stores, key=lambda s: s.get("total_sales", 0), reverse=True)[:3]
-                lines.append("Top stores by sales: " + ", ".join(f"{s['store_id']} (${s.get('total_sales',0):,.0f})" for s in best))
-                lines.append("Stores with weakest growth: " + ", ".join(
-                    f"{s['store_id']} ({s.get('growth_pct', 0)}%)" for s in worst if s.get("growth_pct") is not None) or "no growth data")
+                worst = sorted(stores, key=lambda s: (s.get("growth_pct") or 0))[:3]
+                sections.append("**Top Performing Locations:**\n" + "\n".join(f"- **Store {s['store_id']}**: ${s.get('total_sales',0):,.2f} revenue" for s in best))
+                sections.append("**Locations Requiring Attention:**\n" + "\n".join(f"- **Store {s['store_id']}**: Growth {s.get('growth_pct', 0)}%" for s in worst if s.get("growth_pct") is not None))
 
-        if any(k in q for k in ["demand", "increase", "growth", "trend", "upcoming", "popular"]):
+        elif any(k in q for k in ["demand", "increase", "growth", "trend", "upcoming", "popular"]):
             growing = [p for p in products if p.get("growth_pct") is not None and p["growth_pct"] > 10]
+            sections.append("### Rising Velocity Products")
             if growing:
-                lines.append("Products with rising demand: " + ", ".join(f"{p['item_id']} (+{p['growth_pct']:.0f}%)" for p in growing[:5]))
+                sections.append("Products demonstrating positive velocity acceleration:\n" + "\n".join(f"- **{p['item_id']}**: +{p['growth_pct']:.1f}% demand surge" for p in growing[:5]))
             else:
-                lines.append("No products with strong recent demand growth detected.")
+                sections.append("- Product sales volume is currently tracking near steady-state baseline.")
 
-        if not lines:
-            summary = sales
-            lines.append(f"This business has {summary.get('total_products', 0)} products across "
-                         f"{summary.get('total_stores', 0)} stores over {summary.get('days_covered', 0)} days "
-                         f"({summary.get('total_sales', 0):,.0f} total sales).")
+        else:
+            sections.append("### Executive Business Overview")
+            sections.append(f"RetailIQ is actively monitoring **{sales.get('total_products', 0)} active products** across **{sales.get('total_stores', 0)} stores** covering **{sales.get('total_sales', 0):,.0f} units** sold.")
             if inv.get("financials"):
-                lines.append(f"Inventory value ${inv['financials'].get('total_inventory_value', 0):,.0f}; "
-                             f"{inv['financials'].get('items_to_reorder', 0)} items need reordering.")
-            if alerts:
-                lines.append("Open alerts: " + "; ".join(a["title"] for a in alerts[:3]))
+                f = inv["financials"]
+                sections.append(f"- **Network Inventory Value**: ${f.get('total_inventory_value', 0):,.2f}\n"
+                                f"- **Stockout Risk Avoidance**: ${f.get('total_stockout_loss_risk', 0):,.2f}\n"
+                                f"- **SKUs Requiring PO**: {f.get('items_to_reorder', 0)} items")
 
-        return "\n".join(lines)
+        return "\n\n".join(sections)
 
 

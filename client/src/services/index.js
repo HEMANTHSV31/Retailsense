@@ -17,6 +17,7 @@ export const authService = {
 
 export const forecastService = {
   generate: (params) => api.post('/forecast/generate', params),
+  options: () => api.get('/forecast/options'),
   history: () => api.get('/forecast/history'),
   getById: (id) => api.get(`/forecast/${id}`),
 };
@@ -40,12 +41,11 @@ export const uploadService = {
   upload: (file) => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post('/upload/', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    return api.post('/upload/', formData);
   },
   history: () => api.get('/upload/history'),
   clean: (datasetId) => api.post(`/upload/${datasetId}/clean`),
+  reset: () => api.post('/upload/reset'),
 };
 
 export const modelService = {
@@ -153,5 +153,14 @@ export const opsService = {
   retryJob: (id) => api.post(`/ops/jobs/${id}/retry`),
   templates: () => api.get('/ops/task-templates'),
 };
+
+export const decisionService = {
+  getDecisions: (params) => api.get('/decisions', { params }),
+  enrichReasoning: (decision) => api.post('/decisions/reason', { decision }),
+  executeAction: (decisionId, operatorNotes) =>
+    api.post(`/decisions/${decisionId}/execute`, { operator_notes: operatorNotes }),
+  getBaselineComparison: () => api.get('/decisions/baseline'),
+};
+
 
 
